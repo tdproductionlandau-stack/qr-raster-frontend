@@ -160,7 +160,7 @@
     .badge-nr { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 8px; background: #eef2ff; color: #3b5bdb; font-weight: 700; font-size: 13px; }
     .thumb-sm { width: 40px; height: 40px; border-radius: 6px; object-fit: cover; border: 1px solid #e5e7eb; }
     .qr-content { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: #6b7280; }
-    .tag { display: inline-block; padding: 2px 8px; border-radius: 99px; font-size: 11px; font-weight: 600; }
+    .tag { display: inline-flex; align-items: center; gap: 4px; padding: 3px 9px; border-radius: 99px; font-size: 11px; font-weight: 600; white-space: nowrap; }
     .tag-success { background: #dcfce7; color: #15803d; }
     .tag-warn    { background: #fef9c3; color: #854d0e; }
     .action-btn { padding: 5px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; border: 1.5px solid #e5e7eb; background: #fff; color: #374151; transition: all .15s; display: inline-flex; align-items: center; gap: 4px; }
@@ -368,8 +368,7 @@
               <th style="width:44px;">#</th>
               <th style="width:80px;">Auftrag</th>
               <th>Name / Telefon</th>
-              <th style="width:80px;">Einstellungen</th>
-              <th style="width:70px;">Status</th>
+              <th style="width:80px;">Status</th>
               <th>Datum &amp; Uhrzeit</th>
               <th style="width:70px;">PDF</th>
             </tr>
@@ -815,7 +814,7 @@ async function renderHistory() {
   const pagination = document.getElementById('paginationBar');
 
   // Lade-Indikator
-  tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:24px;color:#9ca3af;">⏳ Lade Aufträge…</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:24px;color:#9ca3af;">⏳ Lade Aufträge…</td></tr>';
 
   // Beide Quellen zusammenführen
   const localJobs = loadLocalHistory();
@@ -891,9 +890,6 @@ async function renderHistory() {
       <td>
         <div style="font-size:13px;font-weight:500;">${esc(e.name||e.filename||'–')}</div>
         ${e.phone ? `<div style="font-size:11px;color:#6b7280;">+${esc(e.phone)}</div>` : ''}
-      </td>
-      <td style="font-size:12px;color:#6b7280;white-space:nowrap;">
-        ${e.cols}×${e.rows} | ${e.total} Stk.
       </td>
       <td><span class="tag tag-success">✓ Fertig</span></td>
       <td style="font-size:12px;white-space:nowrap;">${formatDate(e.ts)}<br/><span style="color:#9ca3af;">${formatTime(e.ts)}</span></td>
