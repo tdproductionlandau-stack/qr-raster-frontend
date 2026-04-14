@@ -440,13 +440,34 @@ function handleDrop(e) {
 }
 function handleFileSelect(e) { const f = e.target.files[0]; if (f) processFile(f); }
 
-function processFile(file) {
+async function processFile(file) {
   state.imageFile = file;
   const reader = new FileReader();
-  reader.onload = (e) => {
-    state.imageDataUrl = e.target.result;
-    showPreview(file.name, e.target.result);
-    analyzeQR(e.target.result);
+  reader.onload = async (e) => {
+    const originalDataUrl = e.target.result;
+    showPreview(file.name, originalDataUrl);
+    // Auto-Crop: QR-Code via API ausschneiden
+    document.getElementById('analyzingText').textContent = 'QR-Code wird erkannt und ausgeschnitten…';
+    document.getElementById('analyzingOverlay').classList.remove('hidden');
+    try {
+      const formData = new FormData();
+      formData.append('image', file);
+      const resp = await fetch(API_BASE + '/api/detect-crop', { method: 'POST', body: formData });
+      if (resp.ok) {
+        const blob = await resp.blob();
+        const croppedUrl = await new Promise(res => { const r = new FileReader(); r.onload = e2 => res(e2.target.result); r.readAsDataURL(blob); });
+        state.imageDataUrl = croppedUrl;
+        document.getElementById('previewThumb').src = croppedUrl;
+        document.getElementById('analyzingText').textContent = 'QR-Code erkannt und ausgeschnitten!';
+        await sleep(500);
+      } else {
+        state.imageDataUrl = originalDataUrl;
+      }
+    } catch {
+      state.imageDataUrl = originalDataUrl;
+    }
+    document.getElementById('analyzingText').textContent = 'QR-Code wird erkannt…';
+    analyzeQR(state.imageDataUrl);
   };
   reader.readAsDataURL(file);
 }
@@ -662,7 +683,7 @@ async function generatePDF() {
     document.getElementById('generateStatusText').textContent = 'Der Download startet automatisch.';
 
     // ── In Verlauf speichern ──
-    saveToHistory({
+    await saveToHistory({
       filename: state.imageFile ? state.imageFile.name : 'Unbekannt',
       thumb: state.imageDataUrl,
       qrContent: state.qrContent,
@@ -672,6 +693,7 @@ async function generatePDF() {
       format: state.format,
       total: state.cols * state.rows,
       pdfName: filename,
+      documentUrl: null,
       ts: Date.now(),
     });
 
@@ -699,13 +721,26 @@ function loadLocalHistory() {
 function saveLocalHistory(entries) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
 }
-function saveToHistory(entry) {
+async function saveToHistory(entry) {
+  // Synchrone Auftragsnummer von der API holen
+  try {
+    const r = await fetch(API_BASE + '/api/next-job-id');
+    if (r.ok) {
+      const d = await r.json();
+      entry.nr = parseInt(d.nextId);
+      entry.jobId = d.nextId;
+    }
+  } catch {}
+  if (!entry.nr) {
+    const entries = loadLocalHistory();
+    const maxNr = entries.reduce((m, e) => Math.max(m, e.nr||0), 0);
+    entry.nr = maxNr + 1;
+    entry.jobId = String(entry.nr);
+  }
   const entries = loadLocalHistory();
-  const maxNr = entries.reduce((m, e) => Math.max(m, e.nr||0), 0);
-  entry.nr = maxNr + 1;
   entries.unshift(entry);
   saveLocalHistory(entries);
-  updateHistoryBadge();
+  updateHistoryBadge().catch(console.error);
 }
 
 // API-Jobs laden
@@ -825,12 +860,14 @@ async function renderHistory() {
   tbody.innerHTML = page.map((e, i) => {
     const rowNr = start + i + 1;
     const isApi = e._isApi;
-    const pdfLink = e.documentUrl
-      ? `<a href="${esc(e.documentUrl)}" target="_blank" class="action-btn" style="color:#3b5bdb;border-color:#bfdbfe;">
-           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+    const pdfUrl = e.documentUrl || null;
+    const pdfLink = pdfUrl
+      ? `<button onclick="openPdfPreview('${pdfUrl.replace(/'/g,"\\'")}')"
+           class="action-btn" style="color:#3b5bdb;border-color:#bfdbfe;background:#eff6ff;">
+           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
            PDF
-         </a>`
-      : (e.thumb ? '' : '<em style="color:#d1d5db;font-size:12px;">–</em>');
+         </button>`
+      : '<em style="color:#d1d5db;font-size:12px;">–</em>';
     return `
     <tr>
       <td><span class="badge-nr">${rowNr}</span></td>
@@ -894,6 +931,33 @@ function formatDate(ts) {
 }
 function formatTime(ts) {
   return new Date(ts).toLocaleTimeString('de-DE', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+}
+
+// PDF-Vorschau Modal
+function openPdfPreview(url) {
+  let modal = document.getElementById('pdfPreviewModal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'pdfPreviewModal';
+    modal.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.75);display:flex;flex-direction:column;align-items:center;justify-content:center;';
+    modal.innerHTML = `
+      <div style="background:#fff;border-radius:12px;width:95vw;max-width:900px;height:90vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 25px 60px rgba(0,0,0,0.4);">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid #e5e7eb;background:#f9fafb;">
+          <span style="font-weight:700;font-size:16px;color:#111;">&#128196; PDF-Vorschau</span>
+          <div style="display:flex;gap:10px;align-items:center;">
+            <a id="pdfOpenLink" href="" target="_blank" style="padding:7px 16px;background:#3b5bdb;color:#fff;border-radius:8px;font-size:13px;font-weight:600;text-decoration:none;">&#128279; Neuer Tab</a>
+            <button onclick="window.frames['pdfFrame'].focus();window.frames['pdfFrame'].print()" style="padding:7px 16px;background:#059669;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;">&#128424; Drucken</button>
+            <button onclick="document.getElementById('pdfPreviewModal').style.display='none'" style="padding:7px 12px;background:#f3f4f6;color:#374151;border:none;border-radius:8px;font-size:16px;cursor:pointer;line-height:1;">&#10005;</button>
+          </div>
+        </div>
+        <iframe id="pdfFrame" name="pdfFrame" style="flex:1;border:none;width:100%;" src=""></iframe>
+      </div>`;
+    modal.addEventListener('click', e => { if (e.target === modal) modal.style.display = 'none'; });
+    document.body.appendChild(modal);
+  }
+  document.getElementById('pdfFrame').src = url;
+  document.getElementById('pdfOpenLink').href = url;
+  modal.style.display = 'flex';
 }
 
 // ════════════════════════════════════════
