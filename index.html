@@ -683,25 +683,7 @@ async function generatePDF() {
     document.getElementById('generateStatusText').innerHTML =
       'Auftrag #' + jobId + ' – <a href="' + documentUrl + '" target="_blank" style="color:#3b5bdb;font-weight:600;">PDF anzeigen &amp; drucken</a>';
 
-    // In Verlauf speichern (mit echter documentUrl)
-    const entry = {
-      filename: imageName,
-      thumb: state.imageDataUrl,
-      qrContent: state.qrContent,
-      qrDetected: !!state.qrContent,
-      cols: state.cols, rows: state.rows,
-      margin: state.margin, spacing: state.spacing,
-      format: state.format,
-      total: state.cols * state.rows,
-      pdfName: 'qr-raster-' + jobId + '.pdf',
-      documentUrl: documentUrl,
-      jobId: jobId,
-      nr: parseInt(jobId),
-      ts: Date.now(),
-    };
-    const entries = loadLocalHistory();
-    entries.unshift(entry);
-    saveLocalHistory(entries);
+    // Job ist bereits in der API gespeichert – kein localStorage nötig
     updateHistoryBadge().catch(console.error);
 
     // PDF-Vorschau direkt öffnen
@@ -758,34 +740,36 @@ async function loadApiJobs() {
     const r = await fetch(API_BASE + '/api/jobs');
     if (!r.ok) return [];
     const data = await r.json();
-    return data.map(j => ({
-      nr: parseInt(j.jobId),
-      jobId: j.jobId,
-      filename: j.name ? j.name + ' (WhatsApp)' : 'WhatsApp-Auftrag',
-      phone: j.phone || '',
-      name: j.name || '',
-      qrContent: null,
-      qrDetected: true,
-      cols: j.cols || 5,
-      rows: j.rows || 8,
-      total: (j.cols||5) * (j.rows||8),
-      format: 'A4',
-      margin: 10,
-      documentUrl: j.documentUrl,
-      ts: (j.createdAt || 0) * 1000,
-      source: 'api',
-    }));
+    return data.map(j => {
+      const isBrowser = !j.phone || j.phone === 'browser';
+      return {
+        nr: parseInt(j.jobId),
+        jobId: j.jobId,
+        filename: j.name || (isBrowser ? 'Browser-Auftrag' : 'WhatsApp-Auftrag'),
+        phone: isBrowser ? '' : (j.phone || ''),
+        name: j.name || '',
+        isBrowser: isBrowser,
+        qrContent: null,
+        qrDetected: true,
+        cols: j.cols || 5,
+        rows: j.rows || 8,
+        total: (j.cols||5) * (j.rows||8),
+        format: 'A4',
+        margin: 10,
+        documentUrl: j.documentUrl,
+        ts: (j.createdAt || 0) * 1000,
+        source: 'api',
+      };
+    });
   } catch { return []; }
 }
 
 async function updateHistoryBadge() {
-  const local = loadLocalHistory();
-  let apiCount = 0;
+  let count = 0;
   try {
     const r = await fetch(API_BASE + '/api/jobs');
-    if (r.ok) { const d = await r.json(); apiCount = d.length; }
+    if (r.ok) { const d = await r.json(); count = d.length; }
   } catch {}
-  const count = local.length + apiCount;
   const badge = document.getElementById('historyBadge');
   badge.textContent = count;
   badge.style.display = count > 0 ? 'inline' : 'none';
@@ -816,16 +800,11 @@ async function renderHistory() {
   // Lade-Indikator
   tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:24px;color:#9ca3af;">⏳ Lade Aufträge…</td></tr>';
 
-  // Beide Quellen zusammenführen
-  const localJobs = loadLocalHistory();
+  // Nur API-Jobs laden (Browser-Jobs werden jetzt auch über API gespeichert)
   const apiJobs = await loadApiJobs();
-
-  // API-Jobs bekommen Prefix 'A' damit keine Kollision mit lokalen Nummern
-  // Alle zusammen, neueste zuerst
-  const allJobs = [
-    ...apiJobs.map(j => ({...j, _isApi: true})),
-    ...localJobs.map(j => ({...j, _isApi: false}))
-  ].sort((a, b) => (b.ts || 0) - (a.ts || 0));
+  const allJobs = apiJobs
+    .map(j => ({...j, _isApi: true}))
+    .sort((a, b) => (b.ts || 0) - (a.ts || 0));
 
   const search = document.getElementById('historySearch').value.trim().toLowerCase();
   const filter = document.getElementById('historyFilter').value;
@@ -885,7 +864,7 @@ async function renderHistory() {
         <div style="font-size:13px;font-weight:600;color:#111;">
           ${isApi ? `<span style="color:#3b5bdb;">#${esc(e.jobId)}</span>` : `<span style="color:#6b7280;">#${e.nr}</span>`}
         </div>
-        <div style="font-size:11px;color:#9ca3af;margin-top:2px;">${isApi ? '📱 WhatsApp' : '🖥️ Browser'}</div>
+        <div style="font-size:11px;color:#9ca3af;margin-top:2px;">${e.isBrowser ? '🖥️ Browser' : '📱 WhatsApp'}</div>
       </td>
       <td>
         <div style="font-size:13px;font-weight:500;">${esc(e.name||e.filename||'–')}</div>
