@@ -419,13 +419,7 @@ const state = {
 // ════════════════════════════════════════
 //  NAVIGATION
 // ════════════════════════════════════════
-function showView(name) {
-  document.getElementById('viewGenerator').classList.toggle('active', name === 'generator');
-  document.getElementById('viewHistory').classList.toggle('active', name === 'history');
-  document.getElementById('navGenerator').classList.toggle('active', name === 'generator');
-  document.getElementById('navHistory').classList.toggle('active', name === 'history');
-  if (name === 'history') renderHistory().catch(console.error);
-}
+// showView ist im LIVE-POLLING Block definiert (weiter unten)
 
 // ════════════════════════════════════════
 //  DRAG & DROP / FILE SELECT
@@ -982,10 +976,43 @@ function doPrint() {
 }
 
 // ════════════════════════════════════════
+//  LIVE-POLLING (alle 5 Sekunden)
+// ════════════════════════════════════════
+let _lastJobCount = 0;
+let _isHistoryVisible = false;
+
+async function pollForUpdates() {
+  try {
+    const r = await fetch(API_BASE + '/api/jobs');
+    if (!r.ok) return;
+    const jobs = await r.json();
+    const count = jobs.length;
+    // Badge immer aktualisieren
+    const badge = document.getElementById('historyBadge');
+    if (badge) { badge.textContent = count; badge.style.display = count > 0 ? 'inline' : 'none'; }
+    // Verlauf neu rendern wenn neue Jobs dazugekommen sind
+    if (count !== _lastJobCount) {
+      _lastJobCount = count;
+      if (_isHistoryVisible) renderHistory().catch(console.error);
+    }
+  } catch {}
+}
+
+function showView(name) {
+  _isHistoryVisible = (name === 'history');
+  document.getElementById('viewGenerator').classList.toggle('active', name === 'generator');
+  document.getElementById('viewHistory').classList.toggle('active', name === 'history');
+  document.getElementById('navGenerator').classList.toggle('active', name === 'generator');
+  document.getElementById('navHistory').classList.toggle('active', name === 'history');
+  if (name === 'history') renderHistory().catch(console.error);
+}
+
+// ════════════════════════════════════════
 //  INIT
 // ════════════════════════════════════════
 updateUI();
 updateHistoryBadge().catch(console.error);
+setInterval(pollForUpdates, 5000);  // alle 5 Sekunden live aktualisieren
 </script>
 </body>
 </html>
