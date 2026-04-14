@@ -347,9 +347,9 @@
       <div class="history-toolbar">
         <input class="history-search" type="text" id="historySearch" placeholder="🔍  Suchen nach Dateiname, QR-Inhalt, Datum…" oninput="renderHistory()" />
         <select class="history-filter" id="historyFilter" onchange="renderHistory()">
-          <option value="all">Alle</option>
-          <option value="success">QR erkannt</option>
-          <option value="warn">Nicht erkannt</option>
+          <option value="all">Alle Aufträge</option>
+          <option value="api">📱 WhatsApp (Henry)</option>
+          <option value="local">🖥️ Browser</option>
           <option value="today">Heute</option>
           <option value="week">Diese Woche</option>
           <option value="month">Dieser Monat</option>
@@ -366,13 +366,12 @@
           <thead>
             <tr>
               <th style="width:44px;">#</th>
-              <th style="width:56px;">Bild</th>
-              <th>Dateiname</th>
-              <th>QR-Inhalt</th>
-              <th>Einstellungen</th>
-              <th>Status</th>
+              <th style="width:80px;">Auftrag</th>
+              <th>Name / Telefon</th>
+              <th style="width:80px;">Einstellungen</th>
+              <th style="width:70px;">Status</th>
               <th>Datum &amp; Uhrzeit</th>
-              <th style="width:90px;">Aktion</th>
+              <th style="width:70px;">PDF</th>
             </tr>
           </thead>
           <tbody id="historyBody"></tbody>
@@ -687,36 +686,70 @@ async function generatePDF() {
 }
 
 // ════════════════════════════════════════
-//  VERLAUF / HISTORIE  (localStorage)
+//  VERLAUF / HISTORIE  (API + localStorage)
 // ════════════════════════════════════════
+const API_BASE = 'https://qr-api.das-geschenk.online';
 const STORAGE_KEY = 'qr_raster_history';
 
-function loadHistory() {
+// Lokale Jobs (vom Browser generiert)
+function loadLocalHistory() {
   try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]'); }
   catch { return []; }
 }
-function saveHistory(entries) {
+function saveLocalHistory(entries) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
 }
 function saveToHistory(entry) {
-  const entries = loadHistory();
-  // Laufende Nummer = höchste vorhandene + 1
+  const entries = loadLocalHistory();
   const maxNr = entries.reduce((m, e) => Math.max(m, e.nr||0), 0);
   entry.nr = maxNr + 1;
-  entries.unshift(entry); // Neueste zuerst
-  saveHistory(entries);
+  entries.unshift(entry);
+  saveLocalHistory(entries);
   updateHistoryBadge();
 }
-function updateHistoryBadge() {
-  const count = loadHistory().length;
+
+// API-Jobs laden
+async function loadApiJobs() {
+  try {
+    const r = await fetch(API_BASE + '/api/jobs');
+    if (!r.ok) return [];
+    const data = await r.json();
+    return data.map(j => ({
+      nr: parseInt(j.jobId),
+      jobId: j.jobId,
+      filename: j.name ? j.name + ' (WhatsApp)' : 'WhatsApp-Auftrag',
+      phone: j.phone || '',
+      name: j.name || '',
+      qrContent: null,
+      qrDetected: true,
+      cols: j.cols || 5,
+      rows: j.rows || 8,
+      total: (j.cols||5) * (j.rows||8),
+      format: 'A4',
+      margin: 10,
+      documentUrl: j.documentUrl,
+      ts: (j.createdAt || 0) * 1000,
+      source: 'api',
+    }));
+  } catch { return []; }
+}
+
+async function updateHistoryBadge() {
+  const local = loadLocalHistory();
+  let apiCount = 0;
+  try {
+    const r = await fetch(API_BASE + '/api/jobs');
+    if (r.ok) { const d = await r.json(); apiCount = d.length; }
+  } catch {}
+  const count = local.length + apiCount;
   const badge = document.getElementById('historyBadge');
   badge.textContent = count;
   badge.style.display = count > 0 ? 'inline' : 'none';
 }
+
 function clearHistory() {
-  if (!confirm('Gesamten Verlauf unwiderruflich löschen?')) return;
+  if (!confirm('Lokalen Verlauf (Browser) löschen? API-Aufträge bleiben erhalten.')) return;
   localStorage.removeItem(STORAGE_KEY);
-  updateHistoryBadge();
   renderHistory();
 }
 
@@ -731,38 +764,48 @@ function changePerPage() {
   renderHistory();
 }
 
-function renderHistory() {
-  const all = loadHistory();
+async function renderHistory() {
+  const tbody = document.getElementById('historyBody');
+  const empty = document.getElementById('historyEmpty');
+  const pagination = document.getElementById('paginationBar');
+
+  // Lade-Indikator
+  tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:24px;color:#9ca3af;">⏳ Lade Aufträge…</td></tr>';
+
+  // Beide Quellen zusammenführen
+  const localJobs = loadLocalHistory();
+  const apiJobs = await loadApiJobs();
+
+  // API-Jobs bekommen Prefix 'A' damit keine Kollision mit lokalen Nummern
+  // Alle zusammen, neueste zuerst
+  const allJobs = [
+    ...apiJobs.map(j => ({...j, _isApi: true})),
+    ...localJobs.map(j => ({...j, _isApi: false}))
+  ].sort((a, b) => (b.ts || 0) - (a.ts || 0));
+
   const search = document.getElementById('historySearch').value.trim().toLowerCase();
   const filter = document.getElementById('historyFilter').value;
   const now = Date.now();
   const dayMs = 86400000;
 
-  // Filtern
-  let filtered = all.filter(e => {
-    // Text-Suche
+  let filtered = allJobs.filter(e => {
     if (search) {
       const haystack = [
-        e.filename||'', e.qrContent||'', e.pdfName||'',
+        e.filename||'', e.name||'', e.phone||'', e.jobId||'',
         formatDate(e.ts), formatTime(e.ts),
       ].join(' ').toLowerCase();
       if (!haystack.includes(search)) return false;
     }
-    // Dropdown-Filter
-    if (filter === 'success' && !e.qrDetected) return false;
-    if (filter === 'warn'    &&  e.qrDetected) return false;
-    if (filter === 'today'   && (now - e.ts) > dayMs) return false;
-    if (filter === 'week'    && (now - e.ts) > 7*dayMs) return false;
-    if (filter === 'month'   && (now - e.ts) > 30*dayMs) return false;
+    if (filter === 'api'   && !e._isApi) return false;
+    if (filter === 'local' &&  e._isApi) return false;
+    if (filter === 'today' && (now - e.ts) > dayMs) return false;
+    if (filter === 'week'  && (now - e.ts) > 7*dayMs) return false;
+    if (filter === 'month' && (now - e.ts) > 30*dayMs) return false;
     return true;
   });
 
   document.getElementById('historyTotalLabel').textContent =
-    filtered.length + ' von ' + all.length + ' Einträgen';
-
-  const tbody = document.getElementById('historyBody');
-  const empty = document.getElementById('historyEmpty');
-  const pagination = document.getElementById('paginationBar');
+    filtered.length + ' von ' + allJobs.length + ' Einträgen';
 
   if (filtered.length === 0) {
     tbody.innerHTML = '';
@@ -773,55 +816,54 @@ function renderHistory() {
   empty.classList.add('hidden');
   pagination.style.display = 'flex';
 
-  // Paginierung
   const totalPages = histPerPage >= 999999 ? 1 : Math.ceil(filtered.length / histPerPage);
   if (histPage > totalPages) histPage = totalPages;
   const start = (histPage - 1) * (histPerPage >= 999999 ? filtered.length : histPerPage);
   const end   = Math.min(start + (histPerPage >= 999999 ? filtered.length : histPerPage), filtered.length);
   const page  = filtered.slice(start, end);
 
-  // Tabelle rendern
-  tbody.innerHTML = page.map(e => `
+  tbody.innerHTML = page.map((e, i) => {
+    const rowNr = start + i + 1;
+    const isApi = e._isApi;
+    const pdfLink = e.documentUrl
+      ? `<a href="${esc(e.documentUrl)}" target="_blank" class="action-btn" style="color:#3b5bdb;border-color:#bfdbfe;">
+           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+           PDF
+         </a>`
+      : (e.thumb ? '' : '<em style="color:#d1d5db;font-size:12px;">–</em>');
+    return `
     <tr>
-      <td><span class="badge-nr">${e.nr}</span></td>
-      <td>${e.thumb ? `<img class="thumb-sm" src="${e.thumb}" alt="" />` : '–'}</td>
-      <td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(e.filename)}">${esc(e.filename||'–')}</td>
-      <td><span class="qr-content" title="${esc(e.qrContent||'')}">
-        ${e.qrContent ? esc(e.qrContent) : '<em style="color:#d1d5db;">–</em>'}
-      </span></td>
-      <td style="font-size:12px;color:#6b7280;white-space:nowrap;">
-        ${e.cols}×${e.rows} &nbsp;|&nbsp; ${e.total} Stk.<br/>
-        ${e.format==='A4L'?'A4 Quer':'A4 Hoch'} &nbsp;|&nbsp; Rand ${e.margin}mm
-      </td>
-      <td><span class="tag ${e.qrDetected?'tag-success':'tag-warn'}">${e.qrDetected?'✓ Erkannt':'⚠ Manuell'}</span></td>
-      <td style="font-size:12px;white-space:nowrap;">${formatDate(e.ts)}<br/><span style="color:#9ca3af;">${formatTime(e.ts)}</span></td>
+      <td><span class="badge-nr">${rowNr}</span></td>
       <td>
-        <button class="action-btn del" onclick="deleteEntry(${e.nr})" title="Eintrag löschen">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M9 6V4h6v2"/></svg>
-          Löschen
-        </button>
+        <div style="font-size:13px;font-weight:600;color:#111;">
+          ${isApi ? `<span style="color:#3b5bdb;">#${esc(e.jobId)}</span>` : `<span style="color:#6b7280;">#${e.nr}</span>`}
+        </div>
+        <div style="font-size:11px;color:#9ca3af;margin-top:2px;">${isApi ? '📱 WhatsApp' : '🖥️ Browser'}</div>
       </td>
-    </tr>
-  `).join('');
+      <td>
+        <div style="font-size:13px;font-weight:500;">${esc(e.name||e.filename||'–')}</div>
+        ${e.phone ? `<div style="font-size:11px;color:#6b7280;">+${esc(e.phone)}</div>` : ''}
+      </td>
+      <td style="font-size:12px;color:#6b7280;white-space:nowrap;">
+        ${e.cols}×${e.rows} | ${e.total} Stk.
+      </td>
+      <td><span class="tag tag-success">✓ Fertig</span></td>
+      <td style="font-size:12px;white-space:nowrap;">${formatDate(e.ts)}<br/><span style="color:#9ca3af;">${formatTime(e.ts)}</span></td>
+      <td>${pdfLink}</td>
+    </tr>`;
+  }).join('');
 
-  // Paginierungs-Info
   document.getElementById('paginationInfo').textContent =
     `Zeige ${start+1}–${end} von ${filtered.length} Einträgen`;
 
-  // Paginierungs-Buttons
   const ctrl = document.getElementById('paginationControls');
   if (totalPages <= 1) { ctrl.innerHTML = ''; return; }
 
-  let btns = '';
-  btns += `<button class="page-btn" onclick="goPage(${histPage-1})" ${histPage===1?'disabled':''}>‹</button>`;
-
-  // Seitenzahlen (max 7 anzeigen)
-  const pages = getPageRange(histPage, totalPages);
-  for (const p of pages) {
-    if (p === '…') { btns += `<span style="padding:0 4px;color:#9ca3af;">…</span>`; }
-    else { btns += `<button class="page-btn ${p===histPage?'active':''}" onclick="goPage(${p})">${p}</button>`; }
+  let btns = `<button class="page-btn" onclick="goPage(${histPage-1})" ${histPage===1?'disabled':''}>‹</button>`;
+  for (const p of getPageRange(histPage, totalPages)) {
+    if (p === '…') btns += `<span style="padding:0 4px;color:#9ca3af;">…</span>`;
+    else btns += `<button class="page-btn ${p===histPage?'active':''}" onclick="goPage(${p})">${p}</button>`;
   }
-
   btns += `<button class="page-btn" onclick="goPage(${histPage+1})" ${histPage===totalPages?'disabled':''}>›</button>`;
   ctrl.innerHTML = btns;
 }
