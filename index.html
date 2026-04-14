@@ -425,7 +425,7 @@ function showView(name) {
   document.getElementById('viewHistory').classList.toggle('active', name === 'history');
   document.getElementById('navGenerator').classList.toggle('active', name === 'generator');
   document.getElementById('navHistory').classList.toggle('active', name === 'history');
-  if (name === 'history') renderHistory();
+  if (name === 'history') renderHistory().catch(console.error);
 }
 
 // ════════════════════════════════════════
@@ -750,7 +750,7 @@ async function updateHistoryBadge() {
 function clearHistory() {
   if (!confirm('Lokalen Verlauf (Browser) löschen? API-Aufträge bleiben erhalten.')) return;
   localStorage.removeItem(STORAGE_KEY);
-  renderHistory();
+  renderHistory().catch(console.error);
 }
 
 // ── Paginierungs-State ──
@@ -761,7 +761,7 @@ function changePerPage() {
   const val = document.getElementById('perPageSelect').value;
   histPerPage = val === 'all' ? 999999 : parseInt(val);
   histPage = 1;
-  renderHistory();
+  renderHistory().catch(console.error);
 }
 
 async function renderHistory() {
@@ -877,13 +877,13 @@ function getPageRange(current, total) {
   return pages;
 }
 
-function goPage(p) { histPage = p; renderHistory(); }
+function goPage(p) { histPage = p; renderHistory().catch(console.error); }
 
 function deleteEntry(nr) {
-  const entries = loadHistory().filter(e => e.nr !== nr);
-  saveHistory(entries);
-  updateHistoryBadge();
-  renderHistory();
+  const entries = loadLocalHistory().filter(e => e.nr !== nr);
+  saveLocalHistory(entries);
+  updateHistoryBadge().catch(console.error);
+  renderHistory().catch(console.error);
 }
 
 function esc(str) {
@@ -900,7 +900,7 @@ function formatTime(ts) {
 //  INIT
 // ════════════════════════════════════════
 updateUI();
-updateHistoryBadge();
+updateHistoryBadge().catch(console.error);
 </script>
 </body>
 </html>
